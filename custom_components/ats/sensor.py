@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from homeassistant.const import MATCH_ALL
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass, SensorStateClass
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
@@ -67,6 +68,10 @@ async def async_setup_entry(hass, entry, async_add_entities):
 
 class ATSAggregateSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
+    # Stato, classe di stato e unità restano nel Recorder; gli attributi
+    # personalizzati (indirizzi, POD, contatori, importi, storico fatture)
+    # non vengono registrati nel database. Nel frontend restano visibili.
+    _unrecorded_attributes = frozenset({MATCH_ALL})
 
     def __init__(self, coordinator, entry, key, name, metric, unit=None, device_class=None):
         super().__init__(coordinator)
@@ -80,6 +85,14 @@ class ATSAggregateSensor(CoordinatorEntity, SensorEntity):
         if unit == CURRENCY_EURO or metric in ("active_supplies", "total_supplies", "invoice_count", "unpaid_count"):
             self._attr_state_class = SensorStateClass.MEASUREMENT
         self._attr_extra_state_attributes = {}
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Identificativo stabile della metrica, indipendente dall'entity_id."""
+        return {
+            **(self._attr_extra_state_attributes or {}),
+            "ats_metric": self._metric,
+        }
 
     @property
     def native_value(self):
@@ -124,7 +137,18 @@ class ATSAggregateSensor(CoordinatorEntity, SensorEntity):
         if self._metric == "invoice_count":
             return len(invoices) if invoices else None
         if self._metric == "unpaid_count":
-            return sum(1 for i in invoices if i.get("Payed") is False or i.get("ToPay") is True or str(i.get("StatusText", "")).lower() in ("non pagata", "non pagato"))
+            # ATS può indicare ToPay=True anche per fatture storiche già saldate:
+            # un Payed=True esplicito ha sempre la precedenza.
+            return sum(
+                1
+                for i in invoices
+                if i.get("Payed") is not True
+                and (
+                    i.get("Payed") is False
+                    or i.get("ToPay") is True
+                    or str(i.get("StatusText", "")).lower() in ("non pagata", "non pagato")
+                )
+            )
         if self._metric == "remaining_total":
             vals = [_number(_first(i, "RemainingAmount", "RemainigAmount")) for i in invoices]
             vals = [v for v in vals if v is not None]
@@ -197,7 +221,8 @@ class ATSAggregateSensor(CoordinatorEntity, SensorEntity):
                     "periodo_a": i.get("PeriodTo"),
                     "consumo": i.get("Consumption"),
                     "pagata": i.get("Payed"),
-                    "da_pagare": i.get("ToPay"),
+                    "da_pagare": False if i.get("Payed") is True else i.get("ToPay"),
+                    "da_pagare_ats": i.get("ToPay"),
                     "pdf_disponibile": i.get("PdfExist"),
                 } for idx, i in enumerate(invoices)
             }

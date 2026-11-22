@@ -8,6 +8,7 @@ Integrazione **non ufficiale** per Home Assistant che legge dall'area utente di 
 
 ## Cosa fa
 
+- **Accesso automatico (consigliato):** inserisci username e password dello Sportello Online ATS. Cliente, utenze e percorsi API vengono trovati da soli e la sessione si rinnova da sola. In alternativa resta la **modalità manuale** con cookie e percorsi API.
 - Utenze (`supply-light`): stato, contatore e dati della fornitura.
 - Fatture (`invoice`): importi, residui, pagamenti, scadenze e consumi fatturati.
 - Letture del contatore (`reading-base`): ultima lettura, consumo e storico. È facoltativa.
@@ -30,7 +31,26 @@ Tutto viene esposto come sensori sotto un unico dispositivo chiamato **ATS**.
 | `sensor.ats_consumo_ultima_lettura` / `sensor.ats_data_ultima_lettura` | Consumo e data dell'ultima lettura |
 | `sensor.ats_dettagli_letture_contatore` | Attributi `lettura_1`, `lettura_2`… con lo storico delle letture |
 
-I sensori delle letture restano `unknown` finché non configuri il percorso delle letture.
+Con l'accesso automatico le letture sono incluse; in modalità manuale i sensori delle letture restano `unknown` finché non configuri il percorso delle letture.
+
+#### Identificare un sensore: `ats_metric`
+
+Ogni sensore ha l'attributo `ats_metric`, che lo identifica indipendentemente dal suo `entity_id`. Gli `entity_id` possono cambiare (per esempio assegnando un'area): le card e i template possono cercare il sensore per `ats_metric` invece che per nome.
+
+| `ats_metric` | Contenuto |
+|---|---|
+| `active_supplies` / `total_supplies` | Utenze attive / totali |
+| `supply_details` | Dettagli utenze |
+| `invoice_count` / `unpaid_count` | Fatture presenti / non pagate |
+| `remaining_total` / `total_amount` / `paid_total` | Totali in € |
+| `next_expiry_date` / `next_expiry_amount` | Prossima scadenza e importo |
+| `consumption` | Consumo fatturato totale |
+| `last_status` | Stato dell'ultima fattura |
+| `invoice_details` | Dettagli fatture |
+| `last_reading_value` / `last_reading_consumption` / `last_reading_date` | Ultima lettura, consumo e data |
+| `reading_details` | Storico letture |
+
+Le fatture con `Payed=true` non vengono mai contate come da pagare, anche se ATS lascia `ToPay=true`. Gli attributi dei sensori (indirizzi, POD, contatori, importi, storico fatture) restano visibili in Home Assistant ma **non vengono registrati nel database**.
 
 ## Installazione
 
@@ -46,11 +66,14 @@ Copia la cartella `custom_components/ats` in `/config/custom_components/ats` e r
 
 ### Aggiunta dell'integrazione
 
-**Impostazioni → Dispositivi e servizi → Aggiungi integrazione → Alto Trevigiano Servizi (ATS)**, poi compila il modulo con i dati della sezione seguente.
+**Impostazioni → Dispositivi e servizi → Aggiungi integrazione → Alto Trevigiano Servizi (ATS)**, poi scegli come collegarti:
 
-## Come trovare i dati di configurazione
+- **Accesso automatico (consigliato):** inserisci username e password dello Sportello Online ATS (l'account con cui entri nel portale con le credenziali, **non** SPID/CIE) e, se vuoi, l'intervallo. L'integrazione verifica l'accesso e trova da sola cliente, utenze, fatture e letture.
+- **Modalità manuale:** compili percorsi API e cookie, come spiegato in [Modalità manuale](#modalità-manuale-come-trovare-cookie-e-percorsi). Serve se accedi al portale solo con SPID/CIE e non hai username e password.
 
-L'integrazione non chiede username e password: usa i percorsi delle richieste API e il cookie di sessione che il portale usa quando sei collegato. Li prendi dagli strumenti per sviluppatori del browser (qui i nomi delle voci sono quelli di Chrome in italiano; in Edge e Firefox sono molto simili).
+## Modalità manuale: come trovare cookie e percorsi
+
+Questa sezione serve solo per la modalità manuale: usa i percorsi delle richieste API e il cookie di sessione che il portale usa quando sei collegato. Li prendi dagli strumenti per sviluppatori del browser (qui i nomi delle voci sono quelli di Chrome in italiano; in Edge e Firefox sono molto simili).
 
 1. Accedi all'area utente del portale ATS dal browser, come fai di solito.
 2. Premi **F12** (o tasto destro → **Ispeziona**) e apri la scheda **Rete**.
@@ -74,16 +97,17 @@ L'intervallo di aggiornamento è in minuti (da 5 a 1440, predefinito 60).
 
 ## Durata della sessione
 
-L'integrazione usa il cookie di sessione del portale e non implementa né il rinnovo automatico dell'accesso SPID né la firma HMAC. Finora, nell'uso reale, il cookie è rimasto valido nel tempo senza bisogno di essere rinnovato, ma la durata **non è documentata dal portale** e non è garantita: la sessione potrebbe terminare, per esempio dopo un logout dal portale, una revoca o una scadenza lato server.
+**Accesso automatico:** quando il portale rifiuta la sessione (risposta 401/403 o rimando alla pagina di accesso), l'integrazione rifà il login da sola, una volta per richiesta, e riprova. Se ATS non accetta più la password, Home Assistant avvia la **riautenticazione** e ti chiede la nuova password per lo stesso username, senza ricreare le entità.
 
-Se smette di funzionare, l'aggiornamento fallisce e Home Assistant mostra l'errore di aggiornamento dell'integrazione. Rifai i passi 1–7 per prendere un cookie nuovo e aggiornalo in **Impostazioni → Dispositivi e servizi → ATS → Configura**: l'integrazione si ricarica da sola. Per non invalidare il cookie in uso, evita di fare logout dal portale nel browser da cui l'hai copiato.
+**Modalità manuale:** l'integrazione usa il cookie di sessione del portale e non lo rinnova. Finora, nell'uso reale, il cookie è rimasto valido nel tempo, ma la durata **non è documentata dal portale** e non è garantita: la sessione potrebbe terminare, per esempio dopo un logout dal portale, una revoca o una scadenza lato server. Se smette di funzionare, l'aggiornamento fallisce e Home Assistant mostra l'errore di aggiornamento dell'integrazione. Rifai i passi 1–7 per prendere un cookie nuovo e aggiornalo in **Impostazioni → Dispositivi e servizi → ATS → Configura**: l'integrazione si ricarica da sola. Per non invalidare il cookie in uso, evita di fare logout dal portale nel browser da cui l'hai copiato.
 
 ## Sicurezza
 
-- Non inserire credenziali SPID o password del portale.
-- Il cookie viene salvato nella configurazione di Home Assistant, che non è un archivio cifrato per segreti.
-- L'integrazione non scrive il cookie nei log.
-- Il portale segnala con un header `deprecated` che in futuro le richieste senza firma HMAC non saranno più accettate. Questa versione **non** implementa HMAC.
+- **Non inserire mai credenziali SPID/CIE.** L'accesso automatico usa solo username e password dello Sportello Online ATS.
+- Con l'accesso automatico **username e password vengono salvati nella configurazione di Home Assistant**, che non è un archivio cifrato di segreti: chi può leggere i file di configurazione può leggerli. Anche il cookie della modalità manuale vale come una password. Se non ti va bene, usa la modalità manuale.
+- Le credenziali vengono inviate soltanto all'indirizzo ufficiale del portale ATS: con username e password configurati, un indirizzo base diverso non viene accettato.
+- Password e cookie non vengono scritti nei log.
+- Il portale restituisce un'intestazione `deprecated` che segnala che le richieste senza firma HMAC prima o poi non saranno più accettate. Questa versione **non** implementa la firma HMAC.
 
 ## Limiti
 
@@ -94,11 +118,17 @@ Se smette di funzionare, l'aggiornamento fallisce e Home Assistant mostra l'erro
 
 ## Risoluzione problemi
 
-- **Errore all'aggiunta o entità non disponibili:** controlla che i percorsi comincino con `/`, che siano completi di codici e che il cookie sia ancora valido (vedi *Durata della sessione*).
-- **Sensori delle letture `unknown`:** manca il percorso delle letture; aggiungilo da **Configura**.
+- **«Username o password ATS non accettati»:** controlla di usare le credenziali dello Sportello Online, non quelle SPID/CIE. Se accedi solo con SPID/CIE usa la modalità manuale.
+- **«Accesso riuscito ma non è stato possibile rilevare cliente e forniture»:** il portale potrebbe aver cambiato struttura; riprova più tardi o usa la modalità manuale.
+- **Errore all'aggiunta o entità non disponibili (modalità manuale):** controlla che i percorsi comincino con `/`, che siano completi di codici e che il cookie sia ancora valido (vedi *Durata della sessione*).
+- **Sensori delle letture `unknown` (modalità manuale):** manca il percorso delle letture; aggiungilo da **Configura**.
 - **Gli ID non sono `sensor.ats_…`:** se avevi installato una versione precedente, gli ID già registrati restano quelli vecchi. Dalla pagina del dispositivo, menu ⋮, usa **Ricrea ID entità**.
 - Per i log, attiva il livello debug per `custom_components.ats` e non condividere righe che contengono cookie o codici.
 
 ## Segnalare problemi
 
 Apri una issue su GitHub descrivendo versione di Home Assistant, versione dell'integrazione e l'errore del log, **senza** cookie né codici dell'account.
+
+## Crediti
+
+Accesso automatico e rinnovo della sessione adattati da [EnrCol/ha-ats](https://github.com/EnrCol/ha-ats) (MIT), fork di questo progetto.
